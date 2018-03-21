@@ -27,9 +27,11 @@ import android.view.View;
 import android.view.ViewGroup;
 
 import com.example.android.sampletvinput.R;
+import com.example.android.sampletvinput.SampleJobService;
 import com.google.android.media.tv.companionlibrary.ChannelSetupFragment;
 import com.google.android.media.tv.companionlibrary.EpgSyncJobService;
-import com.example.android.sampletvinput.SampleJobService;
+
+import timber.log.Timber;
 
 /**
  * Fragment which shows a sample UI for registering channels and setting up SampleJobService to
@@ -45,12 +47,13 @@ public class RichSetupFragment extends ChannelSetupFragment {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // Extract input id from the intent that system used to start the activity
         mInputId = getActivity().getIntent().getStringExtra(TvInputInfo.EXTRA_INPUT_ID);
     }
 
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container,
-            Bundle savedInstanceState) {
+                             Bundle savedInstanceState) {
         View fragmentView = super.onCreateView(inflater, container, savedInstanceState);
         setBackgroundColor(ContextCompat.getColor(getActivity(), R.color.detail_background));
         setBadge(getResources().getDrawable(R.drawable.your_company));
@@ -63,7 +66,9 @@ public class RichSetupFragment extends ChannelSetupFragment {
 
     @Override
     public void onScanStarted() {
+        Timber.d("Cancelling all sync requests");
         EpgSyncJobService.cancelAllSyncRequests(getActivity());
+        Timber.d("Requesting immediate sync for %s", mInputId);
         EpgSyncJobService.requestImmediateSync(getActivity(), mInputId,
                 new ComponentName(getActivity(), SampleJobService.class));
 
@@ -85,7 +90,9 @@ public class RichSetupFragment extends ChannelSetupFragment {
 
     @Override
     public void onScanFinished() {
+        Timber.d("Scan finished");
         if (!mErrorFound) {
+            Timber.d("Setting up periodic sync for %s", mInputId);
             EpgSyncJobService.cancelAllSyncRequests(getActivity());
             EpgSyncJobService.setUpPeriodicSync(getActivity(), mInputId,
                     new ComponentName(getActivity(), SampleJobService.class),
@@ -99,6 +106,7 @@ public class RichSetupFragment extends ChannelSetupFragment {
 
     @Override
     public void onScanError(int reason) {
+        Timber.d("Scan error");
         mErrorFound = true;
         switch (reason) {
             case EpgSyncJobService.ERROR_EPG_SYNC_CANCELED:

@@ -19,20 +19,23 @@ import android.media.tv.TvContract;
 import android.net.Uri;
 
 import com.example.android.sampletvinput.rich.RichFeedUtil;
-
 import com.google.android.exoplayer.util.Util;
+import com.google.android.media.tv.companionlibrary.EpgSyncJobService;
+import com.google.android.media.tv.companionlibrary.XmlTvParser;
 import com.google.android.media.tv.companionlibrary.model.Advertisement;
 import com.google.android.media.tv.companionlibrary.model.Channel;
 import com.google.android.media.tv.companionlibrary.model.InternalProviderData;
 import com.google.android.media.tv.companionlibrary.model.Program;
-import com.google.android.media.tv.companionlibrary.EpgSyncJobService;
-import com.google.android.media.tv.companionlibrary.XmlTvParser;
 
 import java.util.ArrayList;
 import java.util.List;
 
+import timber.log.Timber;
+
 /**
  * EpgSyncJobService that periodically runs to update channels and programs.
+ * <p>
+ * A JobService that creates and updates channels in the system database
  */
 public class SampleJobService extends EpgSyncJobService {
     private String MPEG_DASH_CHANNEL_NAME = "MPEG_DASH";
@@ -63,12 +66,15 @@ public class SampleJobService extends EpgSyncJobService {
      */
     private static String TEST_AD_REQUEST_URL =
             "https://pubads.g.doubleclick.net/gampad/ads?sz=640x480&iu=/124319096/external/" +
-            "single_ad_samples&ciu_szs=300x250&impl=s&gdfp_req=1&env=vp&output=vast" +
-            "&unviewed_position_start=1&cust_params=deployment%3Ddevsite%26sample_ct" +
-            "%3Dlinear&correlator=";
+                    "single_ad_samples&ciu_szs=300x250&impl=s&gdfp_req=1&env=vp&output=vast" +
+                    "&unviewed_position_start=1&cust_params=deployment%3Ddevsite%26sample_ct" +
+                    "%3Dlinear&correlator=";
 
     @Override
     public List<Channel> getChannels() {
+        // Create and return your full list of channels
+        Timber.d("Getting channels...");
+
         // Add channels through an XMLTV file
         XmlTvParser.TvListing listings = RichFeedUtil.getRichTvListings(this);
         List<Channel> channelList = new ArrayList<>(listings.getChannels());
@@ -97,8 +103,11 @@ public class SampleJobService extends EpgSyncJobService {
     }
 
     @Override
-    public List<Program> getProgramsForChannel(Uri channelUri, Channel channel, long startMs,
-            long endMs) {
+    public List<Program> getProgramsForChannel(Uri channelUri, Channel channel, long startMs, long endMs) {
+        Timber.d("Getting programs for channel %s...", channel.getDisplayName());
+        // Called by the system for each channel when it needs a list of programs that can be viewed
+        // withing a given time window on the channel
+
         if (!channel.getDisplayName().equals(MPEG_DASH_CHANNEL_NAME)) {
             // Is an XMLTV Channel
             XmlTvParser.TvListing listings = RichFeedUtil.getRichTvListings(getApplicationContext());
@@ -130,7 +139,7 @@ public class SampleJobService extends EpgSyncJobService {
                     .setStartTimeUtcMillis(TEARS_OF_STEEL_START_TIME_MS)
                     .setEndTimeUtcMillis(TEARS_OF_STEEL_START_TIME_MS + TEARS_OF_STEEL_DURATION_MS)
                     .setDescription(TEARS_OF_STEEL_DESCRIPTION)
-                    .setCanonicalGenres(new String[] {TvContract.Programs.Genres.TECH_SCIENCE,
+                    .setCanonicalGenres(new String[]{TvContract.Programs.Genres.TECH_SCIENCE,
                             TvContract.Programs.Genres.MOVIES})
                     .setPosterArtUri(TEARS_OF_STEEL_ART)
                     .setThumbnailUri(TEARS_OF_STEEL_ART)

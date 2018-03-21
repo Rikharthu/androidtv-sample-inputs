@@ -23,6 +23,12 @@ import com.example.android.sampletvinput.R;
 
 /**
  * The setup activity for demonstrating {@link RichTvInputService}.
+ * <p>
+ * Activity that is used by the system when it cannot find a channel for an app
+ * <p>
+ * The setup activity describes to the system TV app the channels made available through the TV input
+ *
+ * @see RichSetupFragment
  */
 public class RichTvInputSetupActivity extends Activity {
     @Override

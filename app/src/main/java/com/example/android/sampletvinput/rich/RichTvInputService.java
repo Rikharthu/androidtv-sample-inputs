@@ -19,8 +19,8 @@ package com.example.android.sampletvinput.rich;
 import android.content.ComponentName;
 import android.content.Context;
 import android.graphics.Point;
+import android.media.PlaybackParams;
 import android.media.tv.TvContentRating;
-import android.media.tv.TvContract;
 import android.media.tv.TvInputManager;
 import android.media.tv.TvInputService;
 import android.media.tv.TvTrackInfo;
@@ -33,36 +33,45 @@ import android.support.annotation.RequiresApi;
 import android.util.Log;
 import android.view.Display;
 import android.view.LayoutInflater;
+import android.view.Surface;
 import android.view.View;
 import android.view.WindowManager;
 import android.view.accessibility.CaptioningManager;
 
 import com.example.android.sampletvinput.R;
+import com.example.android.sampletvinput.SampleJobService;
 import com.example.android.sampletvinput.player.DemoPlayer;
 import com.example.android.sampletvinput.player.RendererBuilderFactory;
-
-import com.example.android.sampletvinput.SampleJobService;
 import com.google.android.exoplayer.ExoPlayer;
 import com.google.android.exoplayer.MediaFormat;
 import com.google.android.exoplayer.text.CaptionStyleCompat;
 import com.google.android.exoplayer.text.Cue;
 import com.google.android.exoplayer.text.SubtitleLayout;
+import com.google.android.media.tv.companionlibrary.BaseTvInputService;
+import com.google.android.media.tv.companionlibrary.EpgSyncJobService;
 import com.google.android.media.tv.companionlibrary.TvPlayer;
 import com.google.android.media.tv.companionlibrary.model.Advertisement;
 import com.google.android.media.tv.companionlibrary.model.Channel;
 import com.google.android.media.tv.companionlibrary.model.InternalProviderData;
 import com.google.android.media.tv.companionlibrary.model.Program;
 import com.google.android.media.tv.companionlibrary.model.RecordedProgram;
-import com.google.android.media.tv.companionlibrary.BaseTvInputService;
-import com.google.android.media.tv.companionlibrary.EpgSyncJobService;
 import com.google.android.media.tv.companionlibrary.utils.TvContractUtils;
 
 import java.util.ArrayList;
 import java.util.List;
 
+import timber.log.Timber;
+
 /**
  * TvInputService which provides a full implementation of EPG, subtitles, multi-audio, parental
  * controls, and overlay view.
+ * <p>
+ * This service publishes a list of channels and programs to the TV Provider.
+ * The live TV app on a TV device gets the list of available channels and programs
+ * from the TV Provider and displays them to a user. When a user selects a specific channel,
+ * the live TV app creates a session for the associated TV input service through the
+ * TV Input Manager, and tells the TV input service to tune to the requested channel and
+ * play the content to a display surface provided by the TV app.
  */
 public class RichTvInputService extends BaseTvInputService {
     private static final String TAG = "RichTvInputService";
@@ -95,23 +104,37 @@ public class RichTvInputService extends BaseTvInputService {
     @Override
     public void onCreate() {
         super.onCreate();
+        Timber.d("Creating TV input service");
         mCaptioningManager = (CaptioningManager) getSystemService(Context.CAPTIONING_SERVICE);
     }
 
     @Override
     public final Session onCreateSession(String inputId) {
+        /*
+         * When a user selects a specific channel, the live TV app creates a session
+         * for the associated TV input service through the TV Input Manager, and tells
+         * the TV input service to tune to the requested channel and play the content
+         * to a display surface provided by the TV app.
+         */
+        Timber.d("Creating session for %s", inputId);
         RichTvInputSessionImpl session = new RichTvInputSessionImpl(this, inputId);
         session.setOverlayViewEnabled(true);
         return super.sessionCreated(session);
     }
 
+
     @RequiresApi(api = Build.VERSION_CODES.N)
     @Nullable
     @Override
     public TvInputService.RecordingSession onCreateRecordingSession(String inputId) {
+        // Called by the system when it needs to access app's recording implementation
+        Timber.d("Creating recording session for %s", inputId);
         return new RichRecordingSession(this, inputId);
     }
 
+    /**
+     * Session maintains the TV input state and communicates with the hosting app
+     */
     class RichTvInputSessionImpl extends BaseTvInputService.Session implements
             DemoPlayer.Listener, DemoPlayer.CaptionListener {
         private static final float CAPTION_LINE_HEIGHT_RATIO = 0.0533f;
@@ -134,6 +157,8 @@ public class RichTvInputService extends BaseTvInputService {
 
         @Override
         public View onCreateOverlayView() {
+            // Create custom overlay here for subtitles and etc
+            Timber.d("Creating overlay view");
             LayoutInflater inflater = (LayoutInflater) getSystemService(LAYOUT_INFLATER_SERVICE);
             mSubtitleView = (SubtitleLayout) inflater.inflate(R.layout.subtitleview, null);
 
@@ -199,12 +224,24 @@ public class RichTvInputService extends BaseTvInputService {
         }
 
         @Override
+        public void onPlayChannel(Channel channel) {
+            // Called when the user uses the system TV app to start viewing one of your channels
+            // Do any special channel initialization here
+            Timber.d("Playing channel \"%s\"", channel.getDisplayName());
+            super.onPlayChannel(channel);
+        }
+
+        @Override
         public boolean onPlayProgram(Program program, long startPosMs) {
+            // Called after onPlayChannel when system requests to play specific program
+            // Use TvPlayer to start playing the program
             if (program == null) {
+                // Program not found, request EPG sync to refresh channels and programs
                 requestEpgSync(getCurrentChannelUri());
                 notifyVideoUnavailable(TvInputManager.VIDEO_UNAVAILABLE_REASON_TUNING);
                 return false;
             }
+            Timber.d("Playing program \"%s\" from %d", program.getTitle(), startPosMs);
             createPlayer(program.getInternalProviderData().getVideoType(),
                     Uri.parse(program.getInternalProviderData().getVideoUrl()));
             if (startPosMs > 0) {
@@ -233,26 +270,32 @@ public class RichTvInputService extends BaseTvInputService {
         }
 
         public TvPlayer getTvPlayer() {
+            Timber.d("Getting TV player");
             return mPlayer;
         }
 
         @Override
         public boolean onTune(Uri channelUri) {
-            if (DEBUG) {
-                Log.d(TAG, "Tune to " + channelUri.toString());
-            }
+            // Called when the user selects a channel
+            // Make sure the screen doesn't display any stray video artifacts before your TV input renders the content
+            // by making video unavailable (stop playback)
+            Timber.d("Tune to " + channelUri.toString());
             notifyVideoUnavailable(TvInputManager.VIDEO_UNAVAILABLE_REASON_TUNING);
             releasePlayer();
+            // When the content is rendered to the Surface, you call TvInputService.Session.notifyVideoAvailable()
+            // to allow the video to display (see onStateChanged in this sample)
             return super.onTune(channelUri);
         }
 
         @Override
         public void onPlayAdvertisement(Advertisement advertisement) {
+            Timber.d("Playing advertisement");
             createPlayer(TvContractUtils.SOURCE_TYPE_HTTP_PROGRESSIVE,
                     Uri.parse(advertisement.getRequestUrl()));
         }
 
         private void createPlayer(int videoType, Uri videoUrl) {
+            Timber.d("Creating player for URI %s", videoUrl.toString());
             releasePlayer();
             mPlayer = new DemoPlayer(RendererBuilderFactory.createRendererBuilder(
                     mContext, videoType, videoUrl));
@@ -263,6 +306,7 @@ public class RichTvInputService extends BaseTvInputService {
 
         @Override
         public void onSetCaptionEnabled(boolean enabled) {
+            Timber.d((enabled ? "Enabling" : "Disabling") + " captions");
             mCaptionEnabled = enabled;
             if (mPlayer != null) {
                 if (mCaptionEnabled) {
@@ -276,6 +320,11 @@ public class RichTvInputService extends BaseTvInputService {
 
         @Override
         public boolean onSelectTrack(int type, String trackId) {
+            // The system TV app provides an interface for the user to select a specific track
+            // if more than one track is available for a given track type
+            // For example, subtitles in different languages
+            //  Note that when null is passed as the track ID, this deselects the track.
+            Timber.d("Selecting track \"%s\"", trackId);
             if (trackId == null) {
                 return true;
             }
@@ -283,7 +332,7 @@ public class RichTvInputService extends BaseTvInputService {
             int trackIndex = getIndexFromTrackId(trackId);
             if (mPlayer != null) {
                 if (type == TvTrackInfo.TYPE_SUBTITLE) {
-                    if (! mCaptionEnabled) {
+                    if (!mCaptionEnabled) {
                         return false;
                     }
                     mSelectedSubtitleTrackIndex = trackIndex;
@@ -297,6 +346,7 @@ public class RichTvInputService extends BaseTvInputService {
         }
 
         private void releasePlayer() {
+            Timber.d("Releasing player");
             if (mPlayer != null) {
                 mPlayer.removeListener(this);
                 mPlayer.setSurface(null);
@@ -308,12 +358,14 @@ public class RichTvInputService extends BaseTvInputService {
 
         @Override
         public void onRelease() {
+            Timber.d("Releasing session");
             super.onRelease();
             releasePlayer();
         }
 
         @Override
         public void onBlockContent(TvContentRating rating) {
+            Timber.d("Content blocked by parental controls: %s", rating.getMainRating());
             super.onBlockContent(rating);
             releasePlayer();
         }
@@ -327,6 +379,60 @@ public class RichTvInputService extends BaseTvInputService {
                     CAPTION_LINE_HEIGHT_RATIO * Math.min(displaySize.x, displaySize.y));
         }
 
+        @Override
+        public boolean onSetSurface(Surface surface) {
+            // Set player output to the given surface (P.S. handled in DemoPlayer in this sample)
+            Timber.d("Setting surface to " + surface);
+            return super.onSetSurface(surface);
+        }
+
+        @RequiresApi(api = Build.VERSION_CODES.M)
+        @Override
+        public long onTimeShiftGetCurrentPosition() {
+            // Called by the system to get the current playback position in milliseconds.
+            long result = super.onTimeShiftGetCurrentPosition();
+            Timber.d("Getting time shift current position: %d", result);
+            return result;
+        }
+
+        @RequiresApi(api = Build.VERSION_CODES.M)
+        @Override
+        public long onTimeShiftGetStartPosition() {
+            // Called by the system to get the start position of the current time-shift recording in milliseconds.
+            long result = super.onTimeShiftGetStartPosition();
+            Timber.d("Getting time shift start position: %d", result);
+            return result;
+        }
+
+        @Override
+        public void onTimeShiftPause() {
+            // Called when the user is pausing playback
+            Timber.d("Time shift paused");
+            super.onTimeShiftPause();
+        }
+
+        @Override
+        public void onTimeShiftResume() {
+            // Called when the user is resuming playback
+            Timber.d("Time shift resumed");
+            super.onTimeShiftResume();
+        }
+
+        @Override
+        public void onTimeShiftSeekTo(long timeMs) {
+            // Called when the system needs to seek to a new time position.
+            Timber.d("Time shift seek to %d", timeMs);
+            super.onTimeShiftSeekTo(timeMs);
+        }
+
+        @RequiresApi(api = Build.VERSION_CODES.M)
+        @Override
+        public void onTimeShiftSetPlaybackParams(PlaybackParams params) {
+            // Called by the system to provide playback parameters, such as playback speed, for the current session
+            super.onTimeShiftSetPlaybackParams(params);
+        }
+
+        // DemoPlayer callback
         @Override
         public void onStateChanged(boolean playWhenReady, int playbackState) {
             if (mPlayer == null) {
@@ -345,6 +451,8 @@ public class RichTvInputService extends BaseTvInputService {
                 notifyTrackSelected(TvTrackInfo.TYPE_AUDIO, audioId);
                 notifyTrackSelected(TvTrackInfo.TYPE_VIDEO, videoId);
                 notifyTrackSelected(TvTrackInfo.TYPE_SUBTITLE, textId);
+                // When the content is rendered to the Surface, you call TvInputService.Session.notifyVideoAvailable()
+                // to allow the video to display
                 notifyVideoAvailable();
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
                     Math.abs(mPlayer.getPlaybackSpeed() - 1) < 0.1 &&
@@ -355,7 +463,7 @@ public class RichTvInputService extends BaseTvInputService {
 
         @Override
         public void onVideoSizeChanged(int width, int height, int unappliedRotationDegrees,
-                float pixelWidthHeightRatio) {
+                                       float pixelWidthHeightRatio) {
             // Do nothing.
         }
 
@@ -381,6 +489,10 @@ public class RichTvInputService extends BaseTvInputService {
         }
     }
 
+    /**
+     * This subclass is responsible for switching to the correct channel data,
+     * recording the requested data, and communicating recording status and errors to the system.
+     */
     @RequiresApi(api = Build.VERSION_CODES.N)
     private class RichRecordingSession extends BaseTvInputService.RecordingSession {
         private static final String TAG = "RecordingSession";
@@ -409,6 +521,7 @@ public class RichTvInputService extends BaseTvInputService {
 
         @Override
         public void onStartRecording(final Uri uri) {
+            // Immediately start recording
             super.onStartRecording(uri);
             if (DEBUG) {
                 Log.d(TAG, "onStartRecording");
@@ -418,6 +531,7 @@ public class RichTvInputService extends BaseTvInputService {
 
         @Override
         public void onStopRecording(Program programToRecord) {
+            // Stop recording and save to RecordedPrograms table
             if (DEBUG) {
                 Log.d(TAG, "onStopRecording");
             }
@@ -431,12 +545,12 @@ public class RichTvInputService extends BaseTvInputService {
             InternalProviderData internalProviderData = programToRecord.getInternalProviderData();
             internalProviderData.setRecordingStartTime(mStartTimeMs);
             RecordedProgram recordedProgram = new RecordedProgram.Builder(programToRecord)
-                        .setInputId(mInputId)
-                        .setRecordingDataUri(
-                                programToRecord.getInternalProviderData().getVideoUrl())
-                        .setRecordingDurationMillis(currentTime - mStartTimeMs)
-                        .setInternalProviderData(internalProviderData)
-                        .build();
+                    .setInputId(mInputId)
+                    .setRecordingDataUri(
+                            programToRecord.getInternalProviderData().getVideoUrl())
+                    .setRecordingDurationMillis(currentTime - mStartTimeMs)
+                    .setInternalProviderData(internalProviderData)
+                    .build();
             notifyRecordingStopped(recordedProgram);
         }
 
